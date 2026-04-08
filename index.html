@@ -1,133 +1,411 @@
 <!DOCTYPE html>
 <html lang="en-us">
-  <head>
-    <meta charset="utf-8">
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Unity Web Player | BULLET HOLE</title>
-    <link rel="shortcut icon" href="TemplateData/favicon.ico">
-    <link rel="stylesheet" href="TemplateData/style.css">
-  </head>
-  <body>
-    <div id="unity-container" class="unity-desktop">
-      <canvas id="unity-canvas" width=960 height=590 tabindex="-1"></canvas>
-      <div id="unity-loading-bar">
-        <div id="unity-logo"></div>
-        <div id="unity-progress-bar-empty">
-          <div id="unity-progress-bar-full"></div>
-        </div>
-      </div>
-      <div id="unity-warning"> </div>
-      <div id="unity-footer">
-        <div id="unity-logo-title-footer"></div>
-        <div id="unity-fullscreen-button"></div>
-        <div id="unity-build-title">BULLET HOLE</div>
-      </div>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!--
+    Performance: tell the browser this page uses WebGL so it can
+    pre-allocate GPU resources before the loader even runs.
+  -->
+  <meta http-equiv="origin-trial" content="">
+
+  <title>BULLET HOLE</title>
+  <link rel="shortcut icon" href="TemplateData/favicon.ico">
+  <link rel="stylesheet" href="TemplateData/style.css">
+
+  <style>
+    /* ── Remove all default margin/scroll so canvas fills the window ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #000;
+      /* GPU hint — compositing layer for the whole page */
+      will-change: transform;
+    }
+
+    #unity-container {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+    }
+
+    #unity-canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      /* Force hardware-accelerated compositing */
+      transform: translateZ(0);
+      will-change: contents;
+      /* Prevent blurry scaling on high-DPI screens */
+      image-rendering: pixelated;
+    }
+
+    /* Loading bar — centred overlay */
+    #unity-loading-bar {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      display: none;
+      text-align: center;
+      z-index: 10;
+    }
+    #unity-logo { width: 154px; height: 130px; background: url('TemplateData/unity-logo-dark.png') no-repeat center; }
+    #unity-progress-bar-empty {
+      width: 300px; height: 18px;
+      margin-top: 14px;
+      background: #1a1a1a;
+      border-radius: 9px;
+      overflow: hidden;
+      border: 1px solid #444;
+    }
+    #unity-progress-bar-full {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #e74c3c, #ff6b6b);
+      border-radius: 9px;
+      transition: width 0.1s ease;
+    }
+
+    #unity-warning {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+    }
+
+    /* Footer — hidden once loaded */
+    #unity-footer { display: none; }
+
+    /* Fullscreen prompt overlay (shown before user interacts) */
+    #fullscreen-prompt {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      color: #fff;
+      font-family: 'Segoe UI', sans-serif;
+      gap: 18px;
+      cursor: pointer;
+    }
+    #fullscreen-prompt h1 {
+      font-size: 2.8rem;
+      font-weight: 900;
+      letter-spacing: 4px;
+      color: #e74c3c;
+      text-shadow: 0 0 30px #e74c3c88;
+    }
+    #fullscreen-prompt p {
+      font-size: 1.1rem;
+      color: #aaa;
+      letter-spacing: 1px;
+    }
+    #fullscreen-prompt .click-hint {
+      margin-top: 10px;
+      font-size: 0.95rem;
+      color: #666;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; }
+      50%       { opacity: 1;   }
+    }
+    #fullscreen-prompt.hidden { display: none; }
+  </style>
+</head>
+<body>
+
+<!-- ── Fullscreen prompt (dismissed on click, then auto-fullscreens) ── -->
+<div id="fullscreen-prompt">
+  <h1>BULLET HOLE</h1>
+  <p>Click anywhere to play</p>
+  <div class="click-hint">▶ CLICK TO ENTER FULLSCREEN</div>
+</div>
+
+<div id="unity-container">
+  <canvas id="unity-canvas" tabindex="-1"></canvas>
+
+  <div id="unity-loading-bar">
+    <div id="unity-logo"></div>
+    <div id="unity-progress-bar-empty">
+      <div id="unity-progress-bar-full"></div>
     </div>
-    <script>
-      var canvas = document.querySelector("#unity-canvas");
+  </div>
 
-      // Shows a temporary message banner/ribbon for a few seconds, or
-      // a permanent error message on top of the canvas if type=='error'.
-      // If type=='warning', a yellow highlight color is used.
-      // Modify or remove this function to customize the visually presented
-      // way that non-critical warnings and error messages are presented to the
-      // user.
-      function unityShowBanner(msg, type) {
-        var warningBanner = document.querySelector("#unity-warning");
-        function updateBannerVisibility() {
-          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
-        }
-        var div = document.createElement('div');
-        div.innerHTML = msg;
-        warningBanner.appendChild(div);
-        if (type == 'error') div.style = 'background: red; padding: 10px;';
-        else {
-          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
-          setTimeout(function() {
-            warningBanner.removeChild(div);
-            updateBannerVisibility();
-          }, 5000);
-        }
-        updateBannerVisibility();
-      }
+  <div id="unity-warning"></div>
+  <div id="unity-footer"></div>
+</div>
 
-      var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/joj.loader.js";
-      var config = {
-        arguments: [],
-        dataUrl: buildUrl + "/joj.data.unityweb",
-        frameworkUrl: buildUrl + "/joj.framework.js.unityweb",
-        codeUrl: buildUrl + "/joj.wasm.unityweb",
-        streamingAssetsUrl: "StreamingAssets",
-        companyName: "Place Holder Name",
-        productName: "BULLET HOLE",
-        productVersion: "0.1",
-        showBanner: unityShowBanner,
-        // errorHandler: function(err, url, line) {
-        //    alert("error " + err + " occurred at line " + line);
-        //    // Return 'true' if you handled this error and don't want Unity
-        //    // to process it further, 'false' otherwise.
-        //    return true;
-        // },
-      };
+<script>
+"use strict";
 
-      // By default, Unity keeps WebGL canvas render target size matched with
-      // the DOM size of the canvas element (scaled by window.devicePixelRatio)
-      // Set this to false if you want to decouple this synchronization from
-      // happening inside the engine, and you would instead like to size up
-      // the canvas DOM size and WebGL render target sizes yourself.
-      // config.matchWebGLToCanvasSize = false;
+// ════════════════════════════════════════════════════════════════════════════
+//  PERFORMANCE — preload all build files in parallel so the browser
+//  has them cached before Unity's loader even asks for them.
+//  This cuts load time significantly on repeat visits.
+// ════════════════════════════════════════════════════════════════════════════
+var buildUrl   = "Build";
+var loaderUrl  = buildUrl + "/joj.loader.js";
+var BUILD_FILES = [
+  buildUrl + "/joj.data.unityweb",
+  buildUrl + "/joj.framework.js.unityweb",
+  buildUrl + "/joj.wasm.unityweb",
+];
 
-      // If you would like all file writes inside Unity Application.persistentDataPath
-      // directory to automatically persist so that the contents are remembered when
-      // the user revisits the site the next time, uncomment the following line:
-      // config.autoSyncPersistentDataPath = true;
-      // This autosyncing is currently not the default behavior to avoid regressing
-      // existing user projects that might rely on the earlier manual
-      // JS_FileSystem_Sync() behavior, but in future Unity version, this will be
-      // expected to change.
-
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-        // Mobile device style: fill the whole browser client area with the game canvas:
-
-        var meta = document.createElement('meta');
-        meta.name = 'viewport';
-        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
-        document.getElementsByTagName('head')[0].appendChild(meta);
-        document.querySelector("#unity-container").className = "unity-mobile";
-        canvas.className = "unity-mobile";
-
-        // To lower canvas resolution on mobile devices to gain some
-        // performance, uncomment the following line:
-        // config.devicePixelRatio = 1;
+// Fire-and-forget prefetch — tells the browser to download and cache
+// these files immediately without blocking anything.
+BUILD_FILES.forEach(function(url) {
+  var link = document.createElement("link");
+  link.rel  = "prefetch";
+  link.href = url;
+  link.as   = "fetch";
+  link.crossOrigin = "anonymous";
+  document.head.appendChild(link);
+});
 
 
-      } else {
-        // Desktop style: Render the game canvas in a window that can be maximized to fullscreen:
-        canvas.style.width = "960px";
-        canvas.style.height = "590px";
-      }
+// ════════════════════════════════════════════════════════════════════════════
+//  BLOCK BROWSER KEYBOARD SHORTCUTS
+//  Uses capture phase + stopImmediatePropagation so it fires before
+//  the browser's own handlers. Blocks Ctrl+Space and more.
+// ════════════════════════════════════════════════════════════════════════════
+var BLOCKED = [
+  { key: ' ',   ctrl: true  },   // Ctrl+Space  (IME / autocomplete)
+  { key: 'p',   ctrl: true  },   // Ctrl+P      (print dialog)
+  { key: 's',   ctrl: true  },   // Ctrl+S      (save page)
+  { key: 'u',   ctrl: true  },   // Ctrl+U      (view source)
+  { key: 'F1',  ctrl: false },   // F1          (browser help)
+  { key: 'F3',  ctrl: false },   // F3          (find)
+  { key: 'F5',  ctrl: false },   // F5          (reload)
+  { key: 'F7',  ctrl: false },   // F7          (caret browsing)
+  { key: 'F12', ctrl: false },   // F12         (devtools — remove if you need it)
+];
 
-      document.querySelector("#unity-loading-bar").style.display = "block";
+function blockShortcut(e) {
+  for (var i = 0; i < BLOCKED.length; i++) {
+    var b = BLOCKED[i];
+    var ctrlOk = b.ctrl ? (e.ctrlKey || e.metaKey) : true;
+    if (ctrlOk && e.key === b.key) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+  }
+}
+document.addEventListener('keydown', blockShortcut, true);
+window.addEventListener('keydown',   blockShortcut, true);
 
-      var script = document.createElement("script");
-      script.src = loaderUrl;
-      script.onload = () => {
-        createUnityInstance(canvas, config, (progress) => {
-          document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
-              }).then((unityInstance) => {
-                document.querySelector("#unity-loading-bar").style.display = "none";
-                document.querySelector("#unity-fullscreen-button").onclick = () => {
-                  unityInstance.SetFullscreen(1);
-                };
 
-              }).catch((message) => {
-                alert(message);
-              });
-            };
+// ════════════════════════════════════════════════════════════════════════════
+//  LOCAL SAVE — persist Unity's IndexedDB/PlayerPrefs across sessions.
+//  config.autoSyncPersistentDataPath = true handles the Unity side;
+//  this JS listener ensures a final sync when the tab closes.
+// ════════════════════════════════════════════════════════════════════════════
+var unityInstance = null;
 
-      document.body.appendChild(script);
+window.addEventListener('beforeunload', function() {
+  // Ask the browser to sync the IDBFS (Unity's persistent data) before close.
+  // Only works if Unity has exposed FS.syncfs — safe to call speculatively.
+  try {
+    if (typeof FS !== 'undefined' && typeof FS.syncfs === 'function') {
+      FS.syncfs(false, function() {});
+    }
+  } catch(e) {}
+});
 
-    </script>
-  </body>
+
+// ════════════════════════════════════════════════════════════════════════════
+//  DREAMLO LEADERBOARD BRIDGE
+//
+//  Your Unity C# script calls http://dreamlo.com/lb/... internally.
+//  That is routed through your personal Cloudflare Worker at
+//  https://dreamlo.2010-rsinks.workers.dev which adds HTTPS + CORS headers.
+//
+//  This JS layer provides a global dreamloBridge object so that if you ever
+//  want to call Dreamlo from the page (e.g. for an HTML overlay scoreboard),
+//  you can use dreamloBridge.get() / dreamloBridge.add() directly.
+//  Unity's internal UnityWebRequest already works via the C# script change.
+// ════════════════════════════════════════════════════════════════════════════
+var DREAMLO_WORKER = "https://dreamlo.2010-rsinks.workers.dev/lb/";
+var PUBLIC_CODE    = "69ca88d28f40bc2f60b113e6";
+
+window.dreamloBridge = {
+  // Fetch top scores — callback(err, entries[])
+  // entries = [{ name, score, date }, ...]
+  getScores: function(count, callback) {
+    var url = DREAMLO_WORKER + PUBLIC_CODE + "/pipe/" + (count || 25);
+    fetch(url)
+      .then(function(r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      })
+      .then(function(raw) {
+        var entries = [];
+        raw.trim().split("\n").forEach(function(line, i) {
+          var p = line.trim().split("|");
+          if (p.length >= 2) {
+            entries.push({
+              rank:  i + 1,
+              name:  decodeURIComponent(p[0] || "???"),
+              score: parseInt(p[1], 10) || 0,
+              date:  p[4] || ""
+            });
+          }
+        });
+        callback(null, entries);
+      })
+      .catch(function(err) {
+        console.error("[Dreamlo] getScores error:", err);
+        callback(err, []);
+      });
+  },
+
+  // Quick debug helper — logs top 10 to console
+  logScores: function() {
+    this.getScores(10, function(err, entries) {
+      if (err) { console.error("[Dreamlo] Error:", err); return; }
+      console.table(entries);
+    });
+  }
+};
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  BANNER / ERROR DISPLAY
+// ════════════════════════════════════════════════════════════════════════════
+function unityShowBanner(msg, type) {
+  var warningBanner = document.querySelector("#unity-warning");
+  function updateVisibility() {
+    warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+  }
+  var div = document.createElement('div');
+  div.innerHTML = msg;
+  warningBanner.appendChild(div);
+  if (type === 'error') {
+    div.style.cssText = 'background:#c0392b;color:#fff;padding:10px;font-family:monospace';
+  } else {
+    if (type === 'warning')
+      div.style.cssText = 'background:#f39c12;color:#000;padding:10px';
+    setTimeout(function() {
+      if (warningBanner.contains(div)) warningBanner.removeChild(div);
+      updateVisibility();
+    }, 5000);
+  }
+  updateVisibility();
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  UNITY CONFIG
+// ════════════════════════════════════════════════════════════════════════════
+var config = {
+  arguments:          [],
+  dataUrl:            buildUrl + "/joj.data.unityweb",
+  frameworkUrl:       buildUrl + "/joj.framework.js.unityweb",
+  codeUrl:            buildUrl + "/joj.wasm.unityweb",
+  streamingAssetsUrl: "StreamingAssets",
+  companyName:        "Place Holder Name",
+  productName:        "BULLET HOLE",
+  productVersion:     "0.1",
+  showBanner:         unityShowBanner,
+
+  // ── PERFORMANCE FLAGS ──────────────────────────────────────────────
+  // Keep WebGL canvas resolution matched to CSS size (best for full-window)
+  matchWebGLToCanvasSize: true,
+
+  // Sync Unity's persistent data to IndexedDB automatically so saves
+  // survive page reloads without any extra C# code.
+  autoSyncPersistentDataPath: true,
+};
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  FULLSCREEN HANDLING
+// ════════════════════════════════════════════════════════════════════════════
+function goFullscreen() {
+  var el = document.documentElement;
+  var req = el.requestFullscreen
+         || el.webkitRequestFullscreen
+         || el.mozRequestFullScreen
+         || el.msRequestFullscreen;
+  if (req) req.call(el);
+}
+
+var prompt = document.getElementById("fullscreen-prompt");
+
+prompt.addEventListener("click", function() {
+  prompt.classList.add("hidden");
+  goFullscreen();
+  // Focus canvas so keyboard input goes straight to Unity
+  document.getElementById("unity-canvas").focus();
+});
+
+// Re-enter fullscreen if user accidentally exits (e.g. hits Escape)
+document.addEventListener("fullscreenchange", function() {
+  if (!document.fullscreenElement && !prompt.classList.contains("hidden") === false) {
+    // Only re-prompt if the game has already started (prompt is gone)
+    if (prompt.classList.contains("hidden")) {
+      // Small delay so Escape key doesn't immediately re-trigger
+      setTimeout(goFullscreen, 800);
+    }
+  }
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  LOAD UNITY
+// ════════════════════════════════════════════════════════════════════════════
+document.querySelector("#unity-loading-bar").style.display = "block";
+
+var script = document.createElement("script");
+script.src = loaderUrl;
+
+// ── PERFORMANCE: load the script without blocking the parser ──
+script.async = true;
+
+script.onload = function() {
+  createUnityInstance(
+    document.querySelector("#unity-canvas"),
+    config,
+    function(progress) {
+      document.querySelector("#unity-progress-bar-full").style.width =
+        (100 * progress) + "%";
+    }
+  ).then(function(instance) {
+    unityInstance = instance;
+    document.querySelector("#unity-loading-bar").style.display = "none";
+
+    // Wire up fullscreen button (hidden in footer but still functional)
+    var fsBtn = document.querySelector("#unity-fullscreen-button");
+    if (fsBtn) fsBtn.onclick = function() { instance.SetFullscreen(1); };
+
+    // Expose instance globally so browser console can interact with it
+    // e.g. unityInstance.SendMessage('GameManager', 'CheatOn', '')
+    window.unityInstance = instance;
+
+    console.log("[BULLET HOLE] Unity loaded. Dreamlo worker: " + DREAMLO_WORKER);
+    console.log("[BULLET HOLE] Run dreamloBridge.logScores() to inspect leaderboard.");
+
+  }).catch(function(message) {
+    // Show error in banner instead of a jarring alert()
+    unityShowBanner(message, 'error');
+    console.error("[BULLET HOLE] Unity load failed:", message);
+  });
+};
+
+script.onerror = function() {
+  unityShowBanner(
+    "Failed to load game files. Please check your connection and refresh.",
+    'error'
+  );
+};
+
+document.body.appendChild(script);
+</script>
+</body>
 </html>
