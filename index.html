@@ -78,54 +78,10 @@
     /* Footer — hidden once loaded */
     #unity-footer { display: none; }
 
-    /* Fullscreen prompt overlay (shown before user interacts) */
-    #fullscreen-prompt {
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.85);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      z-index: 200;
-      color: #fff;
-      font-family: 'Segoe UI', sans-serif;
-      gap: 18px;
-      cursor: pointer;
-    }
-    #fullscreen-prompt h1 {
-      font-size: 2.8rem;
-      font-weight: 900;
-      letter-spacing: 4px;
-      color: #e74c3c;
-      text-shadow: 0 0 30px #e74c3c88;
-    }
-    #fullscreen-prompt p {
-      font-size: 1.1rem;
-      color: #aaa;
-      letter-spacing: 1px;
-    }
-    #fullscreen-prompt .click-hint {
-      margin-top: 10px;
-      font-size: 0.95rem;
-      color: #666;
-      animation: pulse 1.5s ease-in-out infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 0.4; }
-      50%       { opacity: 1;   }
-    }
-    #fullscreen-prompt.hidden { display: none; }
+
   </style>
 </head>
 <body>
-
-<!-- ── Fullscreen prompt (dismissed on click, then auto-fullscreens) ── -->
-<div id="fullscreen-prompt">
-  <h1>BULLET HOLE</h1>
-  <p>Click anywhere to play</p>
-  <div class="click-hint">▶ CLICK TO ENTER FULLSCREEN</div>
-</div>
 
 <div id="unity-container">
   <canvas id="unity-canvas" tabindex="-1"></canvas>
@@ -138,7 +94,6 @@
   </div>
 
   <div id="unity-warning"></div>
-  <div id="unity-footer"></div>
 </div>
 
 <script>
@@ -170,35 +125,54 @@ BUILD_FILES.forEach(function(url) {
 
 
 // ════════════════════════════════════════════════════════════════════════════
-//  BLOCK BROWSER KEYBOARD SHORTCUTS
-//  Uses capture phase + stopImmediatePropagation so it fires before
-//  the browser's own handlers. Blocks Ctrl+Space and more.
+//  KEYBOARD SHORTCUT HANDLING
+//
+//  RULE: preventDefault() stops the BROWSER action (print dialog etc.)
+//  but the event still propagates to Unity — so Ctrl+Space, Ctrl+Shift
+//  etc. ALL work normally for gameplay. No stopPropagation ever used.
+//
+//  ESCAPE: hold 600ms = exit fullscreen. Tap = Unity gets it as normal.
 // ════════════════════════════════════════════════════════════════════════════
-var BLOCKED = [
-  { key: ' ',   ctrl: true  },   // Ctrl+Space  (IME / autocomplete)
-  { key: 'p',   ctrl: true  },   // Ctrl+P      (print dialog)
-  { key: 's',   ctrl: true  },   // Ctrl+S      (save page)
-  { key: 'u',   ctrl: true  },   // Ctrl+U      (view source)
-  { key: 'F1',  ctrl: false },   // F1          (browser help)
-  { key: 'F3',  ctrl: false },   // F3          (find)
-  { key: 'F5',  ctrl: false },   // F5          (reload)
-  { key: 'F7',  ctrl: false },   // F7          (caret browsing)
-  { key: 'F12', ctrl: false },   // F12         (devtools — remove if you need it)
+var BROWSER_ONLY = [
+  { key: ' ',  ctrl: true  },  // Ctrl+Space  → no IME popup
+  { key: 'p',  ctrl: true  },  // Ctrl+P      → no print dialog
+  { key: 's',  ctrl: true  },  // Ctrl+S      → no save dialog
+  { key: 'u',  ctrl: true  },  // Ctrl+U      → no view-source
+  { key: 'd',  ctrl: true  },  // Ctrl+D      → no bookmark
+  { key: 'f',  ctrl: true  },  // Ctrl+F      → no find bar
+  { key: 'g',  ctrl: true  },  // Ctrl+G      → no find next
+  { key: 'F1', ctrl: false },  // F1          → no browser help
+  { key: 'F3', ctrl: false },  // F3          → no find
+  { key: 'F5', ctrl: false },  // F5          → no reload
+  { key: 'F7', ctrl: false },  // F7          → no caret browsing
 ];
 
-function blockShortcut(e) {
-  for (var i = 0; i < BLOCKED.length; i++) {
-    var b = BLOCKED[i];
-    var ctrlOk = b.ctrl ? (e.ctrlKey || e.metaKey) : true;
-    if (ctrlOk && e.key === b.key) {
+document.addEventListener('keydown', function(e) {
+  for (var i = 0; i < BROWSER_ONLY.length; i++) {
+    var b = BROWSER_ONLY[i];
+    var ctrlMatch = b.ctrl ? (e.ctrlKey || e.metaKey) : (!e.ctrlKey && !e.metaKey);
+    if (ctrlMatch && e.key === b.key) {
       e.preventDefault();
-      e.stopImmediatePropagation();
+      // NO stopPropagation — Unity canvas must still receive this event
       return;
     }
   }
-}
-document.addEventListener('keydown', blockShortcut, true);
-window.addEventListener('keydown',   blockShortcut, true);
+}, true);
+
+// ── Hold Escape 600ms to exit fullscreen ─────────────────────────────────
+// Tap Escape = Unity gets it untouched (pause menu etc.)
+var escTimer = null;
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && !escTimer) {
+    escTimer = setTimeout(function() {
+      if (document.fullscreenElement) document.exitFullscreen();
+      escTimer = null;
+    }, 600);
+  }
+}, true);
+document.addEventListener('keyup', function(e) {
+  if (e.key === 'Escape') { clearTimeout(escTimer); escTimer = null; }
+}, true);
 
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -336,25 +310,16 @@ function goFullscreen() {
   if (req) req.call(el);
 }
 
-var prompt = document.getElementById("fullscreen-prompt");
-
-prompt.addEventListener("click", function() {
-  prompt.classList.add("hidden");
+// Auto fullscreen on first click anywhere (browser requires user gesture)
+var _fsOnce = false;
+document.addEventListener('click', function() {
+  if (_fsOnce) return;
+  _fsOnce = true;
   goFullscreen();
-  // Focus canvas so keyboard input goes straight to Unity
   document.getElementById("unity-canvas").focus();
-});
+}, { once: true });
 
-// Re-enter fullscreen if user accidentally exits (e.g. hits Escape)
-document.addEventListener("fullscreenchange", function() {
-  if (!document.fullscreenElement && !prompt.classList.contains("hidden") === false) {
-    // Only re-prompt if the game has already started (prompt is gone)
-    if (prompt.classList.contains("hidden")) {
-      // Small delay so Escape key doesn't immediately re-trigger
-      setTimeout(goFullscreen, 800);
-    }
-  }
-});
+// No auto re-enter — hold Escape to exit is intentional.
 
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -380,12 +345,6 @@ script.onload = function() {
     unityInstance = instance;
     document.querySelector("#unity-loading-bar").style.display = "none";
 
-    // Wire up fullscreen button (hidden in footer but still functional)
-    var fsBtn = document.querySelector("#unity-fullscreen-button");
-    if (fsBtn) fsBtn.onclick = function() { instance.SetFullscreen(1); };
-
-    // Expose instance globally so browser console can interact with it
-    // e.g. unityInstance.SendMessage('GameManager', 'CheatOn', '')
     window.unityInstance = instance;
 
     console.log("[BULLET HOLE] Unity loaded. Dreamlo worker: " + DREAMLO_WORKER);
